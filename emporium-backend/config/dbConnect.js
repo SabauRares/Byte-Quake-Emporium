@@ -335,62 +335,94 @@ async function updateOrderStatusAndQuantities(order_id) {
 }
 
 async function addItemToCart(user_id, item_id, quantity) {
-  try {
-    const pool = await connectToDatabase();
+  const pool = await connectToDatabase();
+  
+  // Check if there's a pending order for the user
+  let result = await pool.request()
+      .input('user_id', sql.Int, user_id)
+      .query('SELECT order_id FROM orders WHERE user_id = @user_id AND status = \'Pending\'');
 
-    // Start a transaction
-    const transaction = new sql.Transaction(pool);
-    await transaction.begin();
-
-    try {
-      // Check if there is a pending order for the user
-      const orderResult = await transaction.request()
-        .input('user_id', sql.Int, user_id)
-        .query(`
-          DECLARE @order_id INT;
-
-          -- Retrieve the order ID for the user
-          SELECT @order_id = order_id
-          FROM orders
-          WHERE user_id = @user_id AND status = 'Pending';
-
-          IF @order_id IS NULL
-          BEGIN
-              -- If no pending order exists, create a new order
-              INSERT INTO orders (user_id, status) VALUES (@user_id, 'Pending');
-              SELECT @order_id = SCOPE_IDENTITY(); -- Get the ID of the newly inserted order
-          END
-
-          SELECT @order_id AS order_id;
-        `);
-
-      const order_id = orderResult.recordset[0].order_id;
-
-      // Insert the item into the order_items table
-      const insertResult = await transaction.request()
-        .input('order_id', sql.Int, order_id)
-        .input('item_id', sql.Int, item_id)
-        .input('quantity', sql.Int, quantity)
-        .query(`
-          INSERT INTO order_items (order_id, item_id, quantity) VALUES (@order_id, @item_id, @quantity);
-        `);
-
-      // Commit transaction
-      await transaction.commit();
-      
-      return { success: true, message: 'Item added to cart successfully' };
-    } catch (error) {
-      // Rollback transaction on error
-      await transaction.rollback();
-      throw new Error('Error adding item to cart: ' + error.message);
-    }
-  } catch (error) {
-    throw new Error('Database connection error: ' + error.message);
+  let order_id;
+  
+  if (result.recordset.length === 0) {
+      // No pending order, create a new one
+      result = await pool.request()
+          .input('user_id', sql.Int, user_id)
+          .input('order_date', sql.DateTime, new Date())
+          .input('status', sql.VarChar, 'Pending')
+          .query('INSERT INTO orders (user_id, order_date, status) OUTPUT INSERTED.order_id VALUES (@user_id, @order_date, @status)');
+      order_id = result.recordset[0].order_id;
+  } else {
+      // Use the existing pending order
+      order_id = result.recordset[0].order_id;
   }
+
+  // Check if the item already exists in the order_items table
+  result = await pool.request()
+      .input('order_id', sql.Int, order_id)
+      .input('item_id', sql.Int, item_id)
+      .query('SELECT quantity FROM order_items WHERE order_id = @order_id AND item_id = @item_id');
+  
+  if (result.recordset.length === 0) {
+      // Item does not exist, insert it
+      await pool.request()
+          .input('order_id', sql.Int, order_id)
+          .input('item_id', sql.Int, item_id)
+          .input('quantity', sql.Int, quantity)
+          .query('INSERT INTO order_items (order_id, item_id, quantity) VALUES (@order_id, @item_id, @quantity)');
+  } else {
+      // Item exists, update the quantity
+      await pool.request()
+          .input('order_id', sql.Int, order_id)
+          .input('item_id', sql.Int, item_id)
+          .input('quantity', sql.Int, quantity)
+          .query('UPDATE order_items SET quantity = quantity + @quantity WHERE order_id = @order_id AND item_id = @item_id');
+  }
+
+  return { success: true, message: 'Item added to cart successfully' };
 }
 
+async function removeItemFromCart(user_id, item_id) {
+  try {
+      const pool = await connectToDatabase();
+      
+      // Check if the item exists in the order_items table and get its quantity
+      const result = await pool.request()
+          .input('user_id', sql.Int, user_id)
+          .input('item_id', sql.Int, item_id)
+          .query(`
+              SELECT oi.quantity, oi.order_id
+              FROM order_items oi
+              JOIN orders o ON oi.order_id = o.order_id
+              WHERE o.user_id = @user_id AND oi.item_id = @item_id AND o.status = 'Pending'
+          `);
 
+      if (result.recordset.length === 0) {
+          throw new Error('Item not found in cart');
+      }
 
+      const { quantity, order_id } = result.recordset[0];
+
+      if (quantity > 1) {
+          // Decrease the quantity by 1
+          await pool.request()
+              .input('order_id', sql.Int, order_id)
+              .input('item_id', sql.Int, item_id)
+              .query('UPDATE order_items SET quantity = quantity - 1 WHERE order_id = @order_id AND item_id = @item_id');
+      } else {
+          // Quantity is 1, remove the item from order_items
+          await pool.request()
+              .input('order_id', sql.Int, order_id)
+              .input('item_id', sql.Int, item_id)
+              .query('DELETE FROM order_items WHERE order_id = @order_id AND item_id = @item_id');
+      }
+
+      return { success: true, message: 'Item removed from cart successfully' };
+  } catch (error) {
+      console.error('Error removing item from cart:', error.message);
+      throw new Error('Error removing item from cart');
+  }
+}
 
 // Export functions for external use
 module.exports = {
@@ -413,5 +445,6 @@ module.exports = {
   getConnectedUser,
   getUserOrder,
   updateOrderStatusAndQuantities,
-  addItemToCart
+  addItemToCart,
+  removeItemFromCart
 };

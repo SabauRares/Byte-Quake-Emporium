@@ -61,6 +61,8 @@ const getConnectedUserData = async (req,res) => {
 const getConnectedUserOrders = async(req, res) => {
   try{
     const userOrder = await getUserOrder(req.user_id);
+    // console.log(`userOrderID: ${req.user_id}`);
+    // console.log(`userOrder: ${userOrder}`);
     if(!userOrder){
       return res.status(404).json({error: 'No order found'});
     }
