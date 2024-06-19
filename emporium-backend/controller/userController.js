@@ -1,4 +1,4 @@
-const { addUser,loginUser, getConnectedUser, getUserOrder } = require('../config/dbConnect');
+const { addUser,loginUser, getConnectedUser, getUserOrder,getWishlist } = require('../config/dbConnect');
 const { createToken, validateToken } = require('../middlewares/JWT');
 
 // Function to add a new user to the database
@@ -61,8 +61,6 @@ const getConnectedUserData = async (req,res) => {
 const getConnectedUserOrders = async(req, res) => {
   try{
     const userOrder = await getUserOrder(req.user_id);
-    // console.log(`userOrderID: ${req.user_id}`);
-    // console.log(`userOrder: ${userOrder}`);
     if(!userOrder){
       return res.status(404).json({error: 'No order found'});
     }
@@ -73,5 +71,18 @@ const getConnectedUserOrders = async(req, res) => {
   }
 }
   
+async function getConnecterUserWishlist(req, res) {
+  const user_id = req.user_id;  
+  try {
+      const userWish = await getWishlist(user_id);
+      if(!userWish){
+        return res.status(404).json({error: 'No order found'});
+      }
+      res.status(200).json(userWish);
+  } catch (error) {
+      console.error('Error fetching wishlist:', error.message);
+      res.status(500).json({ error: 'Server error' });
+  }
+}
 
-module.exports = { addUserToDatabase, loginUser,handleLogin,getConnectedUserData, getConnectedUserOrders};
+module.exports = { addUserToDatabase, loginUser,handleLogin,getConnectedUserData, getConnectedUserOrders,getConnecterUserWishlist};

@@ -101,13 +101,13 @@ async function displayUsers() {
 
 async function displayItems() {
   try {
-      await connectToDatabase();
-      const items = await getItems();
-      // console.log('Items:', items);
-      return items;
-      // closeConnection();
+    // Query Items table
+    await connectToDatabase();
+    const result = await sql.query`SELECT * FROM Items`;
+    return result.recordset;
   } catch (err) {
-      console.error('Error fetching items:', err.message);
+    console.error('Error fetching data from Items table:', err.message);
+    throw err; // Re-throw the error for handling in the caller
   }
 }
 
@@ -278,7 +278,6 @@ async function getUserOrder(user_id){
       oi.item_id, 
       oi.quantity, 
       o.order_date, 
-      o.total_amount,
       i.name as name,
       i.price as price
   FROM order_items oi
@@ -424,6 +423,85 @@ async function removeItemFromCart(user_id, item_id) {
   }
 }
 
+
+async function getWishlist(user_id) {
+  try{
+  const pool = await connectToDatabase();
+  const result = await pool.request()
+      .input('user_id', sql.Int, user_id)
+      .query(`SELECT wi.wish_item_id, wi.item_id, i.name, i.price, wi.quantity 
+      FROM wish_items wi
+       JOIN items i ON wi.item_id = i.item_id
+       JOIN wishlist w ON wi.wishlist_id = w.wishlist_id 
+       WHERE w.user_id = @user_id`);
+
+  return result.recordset;
+  }catch(err){
+    console.log(err.message);
+  }
+}
+
+async function addItemToWishlist(user_id, item_id) {
+  const pool = await connectToDatabase();
+
+  // Check if user has a wishlist
+  let result = await pool.request()
+      .input('user_id', sql.Int, user_id)
+      .query('SELECT wishlist_id FROM wishlist WHERE user_id = @user_id');
+
+  let wishlist_id;
+
+  if (result.recordset.length === 0) {
+      // No wishlist, create a new one
+      result = await pool.request()
+          .input('user_id', sql.Int, user_id)
+          .input('created_at', sql.DateTime, new Date())
+          .query('INSERT INTO wishlist (user_id, created_at) OUTPUT INSERTED.wishlist_id VALUES (@user_id, @created_at)');
+      wishlist_id = result.recordset[0].wishlist_id;
+  } else {
+      wishlist_id = result.recordset[0].wishlist_id;
+  }
+
+  // Add item to wishlist
+  await pool.request()
+      .input('wishlist_id', sql.Int, wishlist_id)
+      .input('item_id', sql.Int, item_id)
+      .query('INSERT INTO wish_items (wishlist_id, item_id) VALUES (@wishlist_id, @item_id)');
+
+  return { success: true, message: 'Item added to wishlist successfully' };
+}
+
+async function removeItemFromWishlist(wish_item_id) {
+  const pool = await connectToDatabase();
+
+  await pool.request()
+      .input('wish_item_id', sql.Int, wish_item_id)
+      .query('DELETE FROM wish_items WHERE wish_item_id = @wish_item_id');
+
+  return { success: true, message: 'Item removed from wishlist successfully' };
+}
+
+async function moveToCart(user_id, wish_item_id, addItemToCart) {
+  const pool = await connectToDatabase();
+
+  // Fetch wish item details
+  let result = await pool.request()
+      .input('wish_item_id', sql.Int, wish_item_id)
+      .query('SELECT item_id, quantity FROM wish_items WHERE wish_item_id = @wish_item_id');
+
+  const { item_id, quantity } = result.recordset[0];
+
+  // Add item to cart
+  await addItemToCart(user_id, item_id, quantity);
+
+  // Remove item from wishlist
+  await pool.request()
+      .input('wish_item_id', sql.Int, wish_item_id)
+      .query('DELETE FROM wish_items WHERE wish_item_id = @wish_item_id');
+
+  return { success: true, message: 'Item moved to cart successfully' };
+}
+
 // Export functions for external use
 module.exports = {
   connectToDatabase,
@@ -446,5 +524,10 @@ module.exports = {
   getUserOrder,
   updateOrderStatusAndQuantities,
   addItemToCart,
-  removeItemFromCart
+  removeItemFromCart,
+  getWishlist,
+  removeItemFromWishlist,
+  addItemToWishlist,
+  removeItemFromWishlist,
+  moveToCart
 };
