@@ -425,24 +425,39 @@ async function removeItemFromCart(user_id, item_id) {
 
 
 async function getWishlist(user_id) {
-  try{
+  try {
+      const pool = await connectToDatabase();
+      const result = await pool.request()
+          .input('user_id', sql.Int, user_id)
+          .query(`SELECT wi.wish_item_id, wi.item_id, i.name, i.price, wi.quantity 
+                  FROM wish_items wi
+                  JOIN items i ON wi.item_id = i.item_id
+                  JOIN wishlist w ON wi.wishlist_id = w.wishlist_id 
+                  WHERE w.user_id = @user_id`);
+
+      return result.recordset;
+  } catch (err) {
+      console.error(err.message);
+  }
+}
+
+async function checkItemInWishlistDB(user_id, item_id) {
   const pool = await connectToDatabase();
   const result = await pool.request()
       .input('user_id', sql.Int, user_id)
-      .query(`SELECT wi.wish_item_id, wi.item_id, i.name, i.price, wi.quantity 
-      FROM wish_items wi
-       JOIN items i ON wi.item_id = i.item_id
-       JOIN wishlist w ON wi.wishlist_id = w.wishlist_id 
-       WHERE w.user_id = @user_id`);
-
-  return result.recordset;
-  }catch(err){
-    console.log(err.message);
-  }
+      .input('item_id', sql.Int, item_id)
+      .query('SELECT 1 FROM wish_items wi JOIN wishlist w ON wi.wishlist_id = w.wishlist_id WHERE w.user_id = @user_id AND wi.item_id = @item_id');
+  return result.recordset.length > 0;
 }
 
 async function addItemToWishlist(user_id, item_id) {
   const pool = await connectToDatabase();
+
+  // Check if the item is already in the wishlist
+  const isInWishlist = await checkItemInWishlistDB(user_id, item_id);
+  if (isInWishlist) {
+      return { success: false, message: 'Item is already in wishlist' };
+  }
 
   // Check if user has a wishlist
   let result = await pool.request()
